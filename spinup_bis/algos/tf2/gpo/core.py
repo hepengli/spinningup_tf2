@@ -1,8 +1,6 @@
 """Core functions of the GPO algorithm."""
-from cv2 import log
 import gym
 import numpy as np
-import scipy.signal
 import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 
@@ -26,17 +24,6 @@ def combined_shape(length, shape=None):
     if shape is None:
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
-
-
-@tf.function
-def gaussian_likelihood(value, mu, log_std):
-    """Calculates value's likelihood under Gaussian pdf."""
-    pre_sum = -0.5 * (
-            ((value - mu) / (tf.exp(log_std) + EPS)) ** 2 +
-            2 * log_std + np.log(2 * np.pi)
-    )
-    return pre_sum
-
 
 def mlp(hidden_sizes=(64, 32), activation='relu', output_activation=None,
         layer_norm=False):
@@ -146,17 +133,6 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
                 return low + (high - low) * mu
             else:
                 return low + (high - low) * dist.sample()
-
-        @tf.function
-        def sample(self, observations, n):
-            mu, std = self(observations)
-            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=0.0, high=1.0)
-
-            low, high = self._action_space.low, self._action_space.high
-            if deterministic:
-                return low + (high - low) * mu
-            else:
-                return low + (high - low) * dist.sample(n)
 
         @tf.function
         def action_logprob(self, observations, actions, training=False):

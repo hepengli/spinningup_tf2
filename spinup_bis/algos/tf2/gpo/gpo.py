@@ -204,15 +204,11 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
 
             # Get actions and log probs of actions for next states.
             act_next = actor.action(obs2)
-            # act_next = actor.sample(obs2, n)
 
             # Target Q-values, using actions from *current* policy.
-            # obs2 = tf.tile(obs2, [sample_size, 1])
-            # act_next = tf.reshape(act_next, (np.prod(shape),)+act_dim)
             target_q1 = critic1_targ([obs2, act_next])
             target_q2 = critic2_targ([obs2, act_next])
             target_q = tf.minimum(target_q1, target_q2)
-            # target_q = tf.reshape(target_q, shape)
 
             # Bellman backup for Q function
             td_target = tf.stop_gradient(rews + gamma * (1 - done) * target_q)

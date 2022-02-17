@@ -9,7 +9,7 @@ from spinup_bis import gpo_tf2 as agent  # pylint: disable=import-only-modules
 
 seed = 1
 alg = 'gpo'
-env_id = 'Hopper-v2'
+env_id = 'HalfCheetah-v2'
 output_dir = 'out/{}/{}/exp-{}'.format(env_id, alg, seed)
 save_path = output_dir + '/checkpoint'
 
@@ -35,7 +35,6 @@ agent(env_fn=env_fn,
       total_steps=3_000_000,
       log_every=2000,
       replay_size=1_000_000,
-      update_after=1_000,
       max_ep_len=1000,
       save_freq=200_000,
       seed=seed,

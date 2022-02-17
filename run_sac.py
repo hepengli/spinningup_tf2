@@ -32,7 +32,7 @@ logger_kwargs = dict(output_dir=output_dir,
 
 agent(env_fn=env_fn,
       ac_kwargs=ac_kwargs,
-      total_steps=1_000_000,
+      total_steps=3_000_000,
       log_every=2000,
       replay_size=1_000_000,
       max_ep_len=1000,
