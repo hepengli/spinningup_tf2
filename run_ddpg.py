@@ -7,7 +7,7 @@ import tensorflow as tf
 
 from spinup_bis import ddpg_tf2 as agent  # pylint: disable=import-only-modules
 
-seed = 3
+seed = 1
 alg = 'ddpg'
 env_id = 'Ant-v2'
 output_dir = 'out/{}/{}/exp-{}'.format(env_id, alg, seed)

@@ -7,9 +7,9 @@ import tensorflow as tf
 
 from spinup_bis import td3_tf2 as agent  # pylint: disable=import-only-modules
 
-seed = 3
+seed = 1
 alg = 'td3'
-env_id = 'Hopper-v2'
+env_id = 'Ant-v2'
 output_dir = 'out/{}/{}/exp-{}'.format(env_id, alg, seed)
 save_path = output_dir + '/checkpoint'
 

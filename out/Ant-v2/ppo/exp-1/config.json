@@ -1,0 +1,32 @@
+{
+    "ac_kwargs":	{
+        "activation":	"relu",
+        "hidden_sizes":	[
+            256,
+            256
+        ]
+    },
+    "actor_critic":	"mlp_actor_critic",
+    "clip_ratio":	0.2,
+    "env_fn":	"env_fn",
+    "exp_name":	"Ant-v2-ppo",
+    "gamma":	0.999,
+    "lam":	0.97,
+    "log_every":	2000,
+    "logger_kwargs":	{
+        "exp_name":	"Ant-v2-ppo",
+        "neptune_kwargs":	null,
+        "output_dir":	"out/Ant-v2/ppo/exp-1"
+    },
+    "max_ep_len":	1000,
+    "pi_lr":	0.0003,
+    "save_freq":	200000,
+    "save_path":	"out/Ant-v2/ppo/exp-1/checkpoint",
+    "seed":	1,
+    "target_kl":	0.01,
+    "total_steps":	3000000,
+    "train_every":	2000,
+    "train_pi_iters":	80,
+    "train_v_iters":	80,
+    "v_lr":	0.001
+}

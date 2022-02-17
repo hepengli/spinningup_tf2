@@ -10,6 +10,8 @@ EPS = 1e-8
 LOG_STD_MAX = 2
 LOG_STD_MIN = -20
 
+LOG_PROB_MAX = 10
+LOG_PROB_MIN = -20
 
 def distribute_value(value, num_proc):
     """Adjusts training parameters for distributed training.
@@ -143,7 +145,8 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             # Make sure actions are in correct range
             low, high = self._action_space.low, self._action_space.high
             actions = (actions - low) / (high - low)
-            log_prob = tf.clip_by_value(dist.log_prob(actions), -20., 10.)
+            log_prob = dist.log_prob(actions)
+            log_prob = tf.clip_by_value(log_prob, LOG_PROB_MIN, LOG_PROB_MAX)
 
             return tf.reduce_mean(log_prob, axis=-1)
 
@@ -153,7 +156,8 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             dist = tfd.TruncatedNormal(loc=mu, scale=std, low=0.0, high=1.0)
 
             actions = dist.sample(n_samples)
-            log_prob = tf.clip_by_value(dist.log_prob(actions), -20., 10.)
+            log_prob = dist.log_prob(actions)
+            log_prob = tf.clip_by_value(log_prob, LOG_PROB_MIN, LOG_PROB_MAX)
 
             # Make sure actions are in correct range
             low, high = self._action_space.low, self._action_space.high

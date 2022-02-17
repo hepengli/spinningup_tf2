@@ -9,7 +9,7 @@ from spinup_bis import sac_tf2 as agent  # pylint: disable=import-only-modules
 
 seed = 1
 alg = 'sac'
-env_id = 'HalfCheetah-v2'
+env_id = 'Ant-v2'
 output_dir = 'out/{}/{}/exp-{}'.format(env_id, alg, seed)
 save_path = output_dir + '/checkpoint'
 
