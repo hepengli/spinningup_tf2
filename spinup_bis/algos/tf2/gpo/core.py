@@ -148,6 +148,17 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
                 return low + (high - low) * dist.sample()
 
         @tf.function
+        def sample(self, observations, n):
+            mu, std = self(observations)
+            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=0.0, high=1.0)
+
+            low, high = self._action_space.low, self._action_space.high
+            if deterministic:
+                return low + (high - low) * mu
+            else:
+                return low + (high - low) * dist.sample(n)
+
+        @tf.function
         def action_logprob(self, observations, actions, training=False):
             mu, std = self(observations, training)
             low, high = self._action_space.low, self._action_space.high
@@ -173,16 +184,6 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             actions = low + (high - low) * actions
 
             return actions, tf.reduce_mean(log_prob, -1)
-
-        @tf.function
-        def action_prob(self, observations, actions, training=False):
-            log_prob = self.action_logprob(observations, actions, training)
-            return tf.exp(log_prob)
-
-        @tf.function
-        def sample_prob(self, observations, n_samples):
-            actions, log_prob = self.sample_logprob(observations, n_samples)
-            return actions, tf.exp(log_prob)
 
     return ContinuousActor(action_space, hidden_sizes, activation)
 
