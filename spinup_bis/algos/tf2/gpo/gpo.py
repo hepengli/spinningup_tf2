@@ -59,30 +59,6 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
             `observation_space` kwargs, and returns actor and critic
             tf.keras.Model-s.
 
-            Actor should take an observation in and output:
-            ===========  ================  =====================================
-            Symbol       Shape             Description
-            ===========  ================  =====================================
-            ``mu``       (batch, act_dim)  | Computes mean actions from policy
-                                           | given states.
-            ``pi``       (batch, act_dim)  | Samples actions from policy given
-                                           | states.
-            ``logp_pi``  (batch,)          | Gives log probability, according to
-                                           | the policy, of the action sampled
-                                           | by ``pi``. Critical: must be
-                                           | differentiable with respect to
-                                           | policy parameters all the way
-                                           | through action sampling.
-            ===========  ================  =====================================
-
-            Critic should take an observation and an action in and output:
-            ===========  ================  =====================================
-            Symbol       Shape             Description
-            ===========  ================  =====================================
-            ``q``        (batch,)          | Gives one estimate of Q* for
-                                           | states and actions in the input.
-            ===========  ================  =====================================
-
         ac_kwargs (dict): Any kwargs appropriate for the actor_critic
             function you provided to SAC.
 
@@ -199,12 +175,11 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
             q = tf.reshape(tf.minimum(q1, q2), shape)
 
             # Estimate C and Z
-            adv = q - tf.reduce_mean(q, axis=0, keepdims=True)
+            adv = q - tf.reduce_mean(q, axis=0)
             max_abs_adv = tf.reduce_mean(tf.abs(adv))
             C = max_abs_adv * (gamma**2) / ((1-gamma)**1)
             alpha = adv / (C + EPS)
             Z = tf.reduce_mean(tf.exp(alpha), axis=0)
-            ratio = tf.exp(alpha) / Z
 
             # Actor loss
             n_logptarg = n_logpold + alpha - tf.math.log(Z)

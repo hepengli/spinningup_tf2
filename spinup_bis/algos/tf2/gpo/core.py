@@ -44,20 +44,12 @@ def mlp(hidden_sizes=(64, 32), activation='relu', output_activation=None,
     model = tf.keras.Sequential()
 
     for h in hidden_sizes[:-1]:
-        model.add(tf.keras.layers.Dense(
-            units=h, 
-            activation=None, 
-            # kernel_regularizer=tf.keras.regularizers.L1(0.001)
-            ))
+        model.add(tf.keras.layers.Dense(units=h, activation=None))
         if layer_norm:
             model.add(tf.keras.layers.BatchNormalization())
         model.add(tf.keras.layers.Activation(activation))
 
-    model.add(tf.keras.layers.Dense(
-        units=hidden_sizes[-1], 
-        activation=None, 
-        # kernel_regularizer=tf.keras.regularizers.L1(0.001)
-        ))
+    model.add(tf.keras.layers.Dense(units=hidden_sizes[-1], activation=None))
     if layer_norm:
         model.add(tf.keras.layers.BatchNormalization())
     model.add(tf.keras.layers.Activation(output_activation))
@@ -156,19 +148,6 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
                 return low + (high - low) * dist.sample()
 
         @tf.function
-        def sample(self, observations, n=1):
-            mu, std = self(observations)
-            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=0.0, high=1.0)
-
-            actions = dist.sample(n)
-
-            # Make sure actions are in correct range
-            low, high = self._action_space.low, self._action_space.high
-            actions = low + (high - low) * actions
-
-            return actions
-
-        @tf.function
         def action_logprob(self, observations, actions, training=False):
             mu, std = self(observations, training)
             low, high = self._action_space.low, self._action_space.high
@@ -177,7 +156,7 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             # Make sure actions are in correct range
             low, high = self._action_space.low, self._action_space.high
             actions = (actions - low) / (high - low)
-            log_prob = tf.clip_by_value(dist.log_prob(actions), -200., 200.)
+            log_prob = tf.clip_by_value(dist.log_prob(actions), -20., 10.)
 
             return tf.reduce_mean(log_prob, axis=-1)
 
@@ -187,7 +166,7 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             dist = tfd.TruncatedNormal(loc=mu, scale=std, low=0.0, high=1.0)
 
             actions = dist.sample(n_samples)
-            log_prob = tf.clip_by_value(dist.log_prob(actions), -200., 200.)
+            log_prob = tf.clip_by_value(dist.log_prob(actions), -20., 10.)
 
             # Make sure actions are in correct range
             low, high = self._action_space.low, self._action_space.high
