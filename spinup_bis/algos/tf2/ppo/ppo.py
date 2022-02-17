@@ -205,7 +205,6 @@ def ppo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
     env, test_env = env_fn(), env_fn()
     obs_dim = np.prod(env.observation_space.shape)
     act_dim = env.action_space.shape
-    env.seed(seed)
 
     replay_buffer = PPOBuffer(obs_dim=obs_dim, act_dim=act_dim,
                               size=train_every, gamma=gamma, lam=lam)
