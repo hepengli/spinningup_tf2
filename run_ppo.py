@@ -23,7 +23,7 @@ else:
     neptune_kwargs = None
 
 
-ac_kwargs = dict(hidden_sizes=[64, 64],
+ac_kwargs = dict(hidden_sizes=[256, 256],
                  activation=tf.nn.relu)
 
 logger_kwargs = dict(output_dir=output_dir,
