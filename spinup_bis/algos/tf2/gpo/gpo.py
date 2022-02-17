@@ -184,87 +184,6 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
     critic_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
     @tf.function
-    def learn_on_batch(obs1, obs2, acts, rews, done):
-        shape, n = (sample_size, batch_size), sample_size
-        with tf.GradientTape(persistent=True) as g:
-            # Sample actions
-            n_acts, n_logpold = old_actor.sample_logprob(obs1, n)
-            n_logp = actor.action_logprob(obs1, n_acts)
-
-            # Calculate Q values and advantages
-            n_obs1 = tf.tile(obs1, [sample_size, 1])
-            n_acts = tf.reshape(n_acts, (np.prod(shape),)+act_dim)
-            n_q1 = critic1([n_obs1, n_acts])
-            n_q2 = critic2([n_obs1, n_acts])
-            q = tf.reshape(tf.minimum(n_q1, n_q2), shape)
-
-            # Estimate C and Z
-            adv = q - tf.reduce_mean(q, axis=0, keepdims=True)
-            max_abs_adv = tf.reduce_mean(tf.abs(adv))
-            C = max_abs_adv * (gamma**2) / ((1-gamma)**1)
-            alpha = adv / (C + EPS)
-            Z = tf.reduce_mean(tf.exp(alpha), axis=0)
-            ratio = tf.stop_gradient(tf.exp(alpha) / Z)
-
-            # Actor loss
-            # n_logptarg = n_logpold + alpha - tf.math.log(Z)
-            # error = n_logp - tf.stop_gradient(n_logptarg)
-            error = tf.exp(n_logp - n_logpold) - ratio
-            loss = 0.5 * tf.reduce_mean(error ** 2)
-
-            # Main outputs from computation graph.
-            q1 = critic1([obs1, acts])
-            q2 = critic2([obs1, acts])
-
-            # Get actions and log probs of actions for next states.
-            act_next = actor.action(obs2)
-
-            # Target Q-values, using actions from *current* policy.
-            target_q1 = critic1_targ([obs2, act_next])
-            target_q2 = critic2_targ([obs2, act_next])
-            target_q = tf.minimum(target_q1, target_q2)
-
-            # Entropy-regularized Bellman backup for Q functions.
-            # Using Clipped Double-Q targets.
-            td_target = tf.stop_gradient(rews + gamma * (1 - done) * target_q)
-
-            # Soft actor-critic losses.
-            q1_loss = 0.5 * tf.reduce_mean((td_target - q1) ** 2)
-            q2_loss = 0.5 * tf.reduce_mean((td_target - q2) ** 2)
-            value_loss = q1_loss + q2_loss
-
-        # Compute gradients and do updates.
-        actor_gradients = g.gradient(loss, actor.trainable_variables)
-        actor_optimizer.apply_gradients(
-            zip(actor_gradients, actor.trainable_variables))
-        critic_variables = critic1.trainable_variables + \
-                           critic2.trainable_variables
-        critic_gradients = g.gradient(value_loss, critic_variables)
-        critic_optimizer.apply_gradients(
-            zip(critic_gradients, critic_variables))
-        del g
-
-        # Polyak averaging for target variables.
-        for a, old_a in zip(actor.trainable_variables, 
-                            old_actor.trainable_variables):
-            old_a.assign(a)
-        for v, target_v in zip(critic1.trainable_variables,
-                               critic1_targ.trainable_variables):
-            target_v.assign(polyak * target_v + (1 - polyak) * v)
-        for v, target_v in zip(critic2.trainable_variables,
-                               critic2_targ.trainable_variables):
-            target_v.assign(polyak * target_v + (1 - polyak) * v)
-
-        return dict(loss=loss, 
-                    q1_loss=q1_loss,
-                    q2_loss=q2_loss,
-                    q1=q1,
-                    q2=q2,
-                    alpha=alpha, 
-                    C=C, 
-                    Z=Z)
-
-    @tf.function
     def actor_train_step(obs1, obs2, acts, rews, done):
         shape, n = (sample_size, batch_size), sample_size
         with tf.GradientTape(persistent=True) as g:
@@ -414,17 +333,6 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
                             Alpha=results['alpha'].numpy(),
                             C=results['C'].numpy(),
                             Z=results['Z'].numpy())
-            # for _ in range(update_every):
-            #     batch = replay_buffer.sample_batch(batch_size)
-            #     results = learn_on_batch(**batch)
-            #     logger.store(LossQ1=results['q1_loss'].numpy(), 
-            #                 LossQ2=results['q2_loss'].numpy(), 
-            #                 Q1Vals=results['q1'].numpy(), 
-            #                 Q2Vals=results['q2'].numpy(), 
-            #                 LossA=results['loss'].numpy(), 
-            #                 Alpha=results['alpha'].numpy(), 
-            #                 C=results['C'].numpy(), 
-            #                 Z=results['Z'].numpy())
 
         logger.store(StepsPerSecond=(1 / (time.time() - iter_time)))
 

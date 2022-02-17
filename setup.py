@@ -23,6 +23,7 @@ setuptools.setup(
         'scipy',
         'seaborn',
         'tensorflow>=2.0',
+        'tensorflow_probability>=0.13.0',
     ],
     description='Teaching tools for introducing people to deep RL in TF2.',
 )
