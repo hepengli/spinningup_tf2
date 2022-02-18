@@ -163,7 +163,7 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             low, high = self._action_space.low, self._action_space.high
             actions = low + (high - low) * actions
 
-            return actions, tf.reduce_mean(log_prob, -1)
+            return actions, tf.reduce_mean(log_prob, axis=-1)
 
     return ContinuousActor(action_space, hidden_sizes, activation)
 
