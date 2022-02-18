@@ -148,7 +148,7 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             log_prob = dist.log_prob(actions)
             log_prob = tf.clip_by_value(log_prob, LOG_PROB_MIN, LOG_PROB_MAX)
 
-            return tf.reduce_sum(log_prob, axis=-1)
+            return tf.reduce_mean(log_prob, axis=-1)
 
         @tf.function
         def sample_logprob(self, observations, n_samples):
@@ -163,7 +163,7 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             low, high = self._action_space.low, self._action_space.high
             actions = low + (high - low) * actions
 
-            return actions, tf.reduce_sum(log_prob, -1)
+            return actions, tf.reduce_mean(log_prob, -1)
 
     return ContinuousActor(action_space, hidden_sizes, activation)
 
