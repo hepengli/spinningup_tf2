@@ -23,10 +23,10 @@ algs = ['ddpg', 'sac', 'td3', 'ppo', 'gpo']
 fig = plt.figure()
 for alg in algs:
     df = pd.read_csv(dir+'{}/exp-1/progress.txt'.format(alg), sep="\t")
-    df = pd.DataFrame([df['AverageTestEpRet'].values[:500]]).melt()
+    df = pd.DataFrame([df['AverageTestEpRet'].values[:1500]]).melt()
     sns.lineplot(data=df, x='variable', y='value')
 
-plt.xticks(np.arange(0,501,50), labels=['0']+['%.0fk'%i for i in np.arange(0,101,10)][1:])
+# plt.xticks(np.arange(0,501,50), labels=['0']+['%.0fk'%i for i in np.arange(0,101,10)][1:])
 # plt.yticks(np.arange(-1800,-500,200)[1:], labels=['%.0fk'%i for i in np.arange(-18,-5,2)[1:]])
 plt.xlabel(r'TotalENVInteracts', fontsize='large')
 plt.ylabel('Return', fontsize='large')
