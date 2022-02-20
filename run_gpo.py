@@ -7,7 +7,7 @@ import tensorflow as tf
 
 from spinup_bis import gpo_tf2 as agent  # pylint: disable=import-only-modules
 
-seed = 1
+seed = 3
 alg = 'gpo'
 env_id = 'Hopper-v2'
 output_dir = 'out/{}/{}/exp-{}'.format(env_id, alg, seed)

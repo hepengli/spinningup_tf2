@@ -48,7 +48,7 @@ class ReplayBuffer:
 def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
         total_steps=1e6, log_every=10_000, replay_size=100_000, gamma=0.99, 
         polyak=0.995, lr=1e-3, batch_size=256, update_after=1000, update_every=50, 
-        sample_size=10, max_ep_len=1000, num_test_episodes=10, save_freq=int(1e4), 
+        sample_size=20, max_ep_len=1000, num_test_episodes=10, save_freq=int(1e4), 
         logger_kwargs=None, save_path=None):
     """General Policy Optimization.
 
