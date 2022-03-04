@@ -2,7 +2,6 @@
 import gym
 import numpy as np
 import tensorflow as tf
-from tensorflow_probability import distributions as tfd
 
 
 EPS = 1e-8
@@ -10,19 +9,12 @@ EPS = 1e-8
 LOG_STD_MAX = 2
 LOG_STD_MIN = -20
 
-def distribute_value(value, num_proc):
-    """Adjusts training parameters for distributed training.
-
-    In case of distributed training frequencies expressed in global steps have
-    to be adjusted to local steps, thus divided by the number of processes.
-    """
-    return max(value // num_proc, 1)
-
 
 def combined_shape(length, shape=None):
     if shape is None:
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
+
 
 def mlp(hidden_sizes=(64, 32), activation='relu', output_activation=None,
         layer_norm=False):
@@ -66,22 +58,36 @@ def make_actor_discrete(observation_space, action_space, hidden_sizes,
 
         @tf.function
         def call(self, inputs, training=False, mask=None):
-            return tf.nn.log_softmax(self._network(inputs=inputs, training=training))
+            return self._network(inputs=inputs)
 
         @tf.function
-        def action(self, observations):
-            return tf.squeeze(tf.random.categorical(self(observations), 1),
-                              axis=1)
+        def action(self, observations, deterministic=False):
+            logprob = tf.nn.log_softmax(self(observations))
+            if deterministic:
+                return tf.argmax(logprob, axis=-1)
+            else:
+                return tf.squeeze(tf.random.categorical(logprob, 1), axis=-1)
 
         @tf.function
-        def action_logprob(self, observations, actions, training=False):
+        def sample(self, observations, n):
+            logprob = tf.nn.log_softmax(self(observations))
+            return tf.random.categorical(logprob, n)
+
+        @tf.function
+        def kl(self, other, observations):
+            self_logits = self(observations)
+            other_logits = other(observations)
+            a0 = self_logits - tf.reduce_max(self_logits, axis=-1, keepdims=True)
+            a1 = other_logits - tf.reduce_max(other_logits, axis=-1, keepdims=True)
+            ea0 = tf.exp(a0)
+            ea1 = tf.exp(a1)
+            z0 = tf.reduce_sum(ea0, axis=-1, keepdims=True)
+            z1 = tf.reduce_sum(ea1, axis=-1, keepdims=True)
+            p0 = ea0 / z0
             return tf.reduce_sum(
-                tf.math.multiply(self(observations, training),
-                                 tf.one_hot(tf.cast(actions, tf.int32),
-                                            depth=self._act_dim)), axis=-1)
+                p0 * (a0 - tf.math.log(z0) - a1 + tf.math.log(z1)), axis=-1)
 
     return DiscreteActor(observation_space, action_space, hidden_sizes, activation)
-
 
 def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
     """Creates actor tf.keras.Model.
@@ -105,11 +111,9 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
 
             self._mu = tf.keras.layers.Dense(
                 self._action_dim[0], 
-                activation=tf.keras.activations.sigmoid, 
                 name='mean')
             self._log_std = tf.keras.layers.Dense(
                 action_space.shape[0], 
-                kernel_initializer=tf.initializers.Orthogonal(0.01), 
                 name='log_std_dev')
 
         @tf.function
@@ -120,52 +124,48 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
 
             log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
 
-            return mu, tf.exp(log_std)
+            return mu, log_std
 
         @tf.function
         def action(self, observations, deterministic=False):
-            mu, std = self(observations)
-            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=0.0, high=1.0)
+            mu, log_std = self(observations)
+            std = tf.exp(log_std)
+
+            logits = mu + tf.random.normal(tf.shape(input=mu)) * std
+            unscaled_mu = tf.nn.sigmoid(mu)
+            unscaled_action = tf.nn.sigmoid(logits)
 
             low, high = self._action_space.low, self._action_space.high
             if deterministic:
-                return low + (high - low) * mu
+                return low + (high - low) * unscaled_mu
             else:
-                return low + (high - low) * dist.sample()
+                return low + (high - low) * unscaled_action
 
         @tf.function
-        def action_logprob(self, observations, actions, training=False):
-            mu, std = self(observations, training)
-            low, high = self._action_space.low, self._action_space.high
-            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=0.0, high=1.0)
+        def sample(self, observations, n):
+            mu, log_std = self(observations)
+            std = tf.exp(log_std)
 
-            # Make sure actions are in correct range
-            low, high = self._action_space.low, self._action_space.high
-            actions = (actions - low) / (high - low)
-            log_prob = dist.log_prob(actions)
-            log_prob = tf.clip_by_value(log_prob, -100., np.inf)
+            logits = mu + tf.random.normal((n,)+mu.shape) * std
+            unscaled_actions = tf.nn.sigmoid(logits)
 
-            return tf.reduce_mean(log_prob, axis=-1)
+            low, high = self._action_space.low, self._action_space.high
+            return low + (high - low) * unscaled_actions
 
         @tf.function
-        def sample_logprob(self, observations, n_samples):
-            mu, std = self(observations)
-            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=0.0, high=1.0)
+        def kl(self, other, observations):
+            self_mean, self_logstd = self(observations)
+            other_mean, other_logstd = other(observations)
+            self_std, other_std = tf.exp(self_logstd), tf.exp(other_logstd)
+            kl = other_logstd - self_logstd + (tf.square(self_std) + \
+                tf.square(self_mean - other_mean)) / (2.0 * tf.square(other_std)) - 0.5
 
-            actions = dist.sample(n_samples)
-            log_prob = dist.log_prob(actions)
-            log_prob = tf.clip_by_value(log_prob, -100., np.inf)
-
-            # Make sure actions are in correct range
-            low, high = self._action_space.low, self._action_space.high
-            actions = low + (high - low) * actions
-
-            return actions, tf.reduce_mean(log_prob, -1)
+            return tf.reduce_sum(kl, axis=-1)
 
     return ContinuousActor(action_space, hidden_sizes, activation)
 
 
-def make_critic(observation_space, action_space, hidden_sizes, activation):
+def make_critic_continuous(observation_space, action_space, hidden_sizes, activation):
     """Creates critic tf.keras.Model"""
     obs_input = tf.keras.Input(shape=observation_space.shape)
     act_input = tf.keras.Input(shape=action_space.shape)
@@ -177,7 +177,21 @@ def make_critic(observation_space, action_space, hidden_sizes, activation):
         tf.keras.layers.Reshape([]),
     ])(concat_input)
 
-    return tf.keras.Model(inputs=[obs_input, act_input], outputs=critic)
+    return tf.keras.Model(inputs=[obs_input, act_input], outputs=[critic, critic])
+
+
+def make_critic_discrete(observation_space, action_space, hidden_sizes, activation):
+    """Creates critic tf.keras.Model"""
+    obs_input = tf.keras.Input(shape=observation_space.shape)
+    act_input = tf.keras.Input(shape=action_space.shape)
+
+    critic = mlp(hidden_sizes=list(hidden_sizes) + [action_space.n],
+            activation=activation)(obs_input)
+
+    onehot_act = tf.one_hot(tf.cast(act_input, tf.int32), action_space.n)
+    critic_selected = tf.reduce_sum(critic * onehot_act, axis=-1)
+
+    return tf.keras.Model(inputs=[obs_input, act_input], outputs=[critic_selected, critic])
 
 
 def mlp_actor_critic(observation_space, action_space, hidden_sizes=(256, 256),
@@ -189,11 +203,16 @@ def mlp_actor_critic(observation_space, action_space, hidden_sizes=(256, 256),
     if isinstance(action_space, gym.spaces.Discrete):
         actor = make_actor_discrete(observation_space, action_space,
                                     hidden_sizes, activation, layer_norm)
+        critic1 = make_critic_discrete(observation_space, action_space, 
+                                         hidden_sizes, activation)
+        critic2 = make_critic_discrete(observation_space, action_space, 
+                                         hidden_sizes, activation)
     elif isinstance(action_space, gym.spaces.Box):
         actor = make_actor_continuous(action_space, hidden_sizes, 
                                       activation, layer_norm)
-
-    critic1 = make_critic(observation_space, action_space, hidden_sizes, activation)
-    critic2 = make_critic(observation_space, action_space, hidden_sizes, activation)
+        critic1 = make_critic_continuous(observation_space, action_space, 
+                                         hidden_sizes, activation)
+        critic2 = make_critic_continuous(observation_space, action_space, 
+                                         hidden_sizes, activation)
 
     return actor, critic1, critic2

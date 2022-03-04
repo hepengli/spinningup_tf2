@@ -6,6 +6,16 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+def moving_avg(nums, N):
+    cumsum, moving_aves = [0], []
+    for i, x in enumerate(nums, 1):
+        cumsum.append(cumsum[i-1] + x)
+        if i>=N:
+            moving_ave = (cumsum[i] - cumsum[i-N])/N
+            #can do stuff with moving_ave here
+            moving_aves.append(moving_ave)
+    return moving_aves
+
 # sns.set(rc={'figure.figsize':(100, 100)})
 sns.set_style('ticks', 
               rc={'axes.grid': True,
@@ -17,14 +27,20 @@ sns.set_style('ticks',
               })
 sns.set_context("paper", font_scale=1.4)
 
-dir = '/home/lihepeng/Documents/Github/spinningup_tf2/out/Ant-v2/'
-algs = ['ddpg', 'sac', 'td3', 'ppo', 'gpo']
+env = 'Walker2d-v2'
+dir = '/home/lihepeng/Documents/Github/spinningup_tf2/out/{}/'.format(env)
+# algs = ['ddpg', 'sac', 'td3', 'ppo', 'gpo']
+algs = ['sac', 'gpo']
 
 fig = plt.figure()
 for alg in algs:
-    df = pd.read_csv(dir+'{}/exp-1/progress.txt'.format(alg), sep="\t")
-    df = pd.DataFrame([df['AverageTestEpRet'].values[:1500]]).melt()
-    sns.lineplot(data=df, x='variable', y='value')
+    returns = []
+    for seed in range(1,4):
+        df = pd.read_csv(dir+'{}/exp-{}/progress.txt'.format(alg, seed), sep="\t")
+        data = df['AverageTestEpRet'].values[:800]
+        returns.append(moving_avg(data, 50))
+    dfs = pd.DataFrame(np.array(returns)).melt()
+    sns.lineplot(data=dfs, x='variable', y='value')
 
 # plt.xticks(np.arange(0,501,50), labels=['0']+['%.0fk'%i for i in np.arange(0,101,10)][1:])
 # plt.yticks(np.arange(-1800,-500,200)[1:], labels=['%.0fk'%i for i in np.arange(-18,-5,2)[1:]])

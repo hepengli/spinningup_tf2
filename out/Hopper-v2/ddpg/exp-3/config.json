@@ -1,0 +1,34 @@
+{
+    "ac_kwargs":	{
+        "activation":	"relu",
+        "hidden_sizes":	[
+            256,
+            256
+        ]
+    },
+    "act_noise":	0.1,
+    "actor_critic":	"mlp_actor_critic",
+    "batch_size":	100,
+    "env_fn":	"env_fn",
+    "exp_name":	"Hopper-v2_ddpg",
+    "gamma":	0.99,
+    "log_every":	2000,
+    "logger_kwargs":	{
+        "exp_name":	"Hopper-v2_ddpg",
+        "neptune_kwargs":	null,
+        "output_dir":	"out/Hopper-v2/ddpg/exp-3"
+    },
+    "max_ep_len":	1000,
+    "num_test_episodes":	10,
+    "pi_lr":	0.001,
+    "polyak":	0.995,
+    "q_lr":	0.001,
+    "replay_size":	100000,
+    "save_freq":	200000,
+    "save_path":	"out/Hopper-v2/ddpg/exp-3/checkpoint",
+    "seed":	3,
+    "start_steps":	10000,
+    "total_steps":	1000000,
+    "update_after":	1000,
+    "update_every":	50
+}

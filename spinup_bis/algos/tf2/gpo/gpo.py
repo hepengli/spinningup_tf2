@@ -3,6 +3,7 @@
 import random
 import time
 
+import gym
 import numpy as np
 import tensorflow as tf
 
@@ -45,11 +46,11 @@ class ReplayBuffer:
 
         return batch
 
-def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
-        total_steps=1e6, log_every=10_000, replay_size=100_000, gamma=0.99, 
-        polyak=0.995, lr=1e-3, batch_size=256, update_after=1000, update_every=50, 
-        sample_size=20, max_ep_len=1000, num_test_episodes=10, save_freq=int(1e4), 
-        logger_kwargs=None, save_path=None):
+def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=None,
+        total_steps=1_000_000, log_every=10_000, replay_size=10_000, gamma=0.99, 
+        polyak=0.995, lr=0.001, batch_size=256, update_every=50, sample_size=10, 
+        start_steps=10_000, update_after=1000, max_ep_len=1000, save_freq=10_000, 
+        num_test_episodes=10, logger_kwargs=None, save_path=None):
     """General Policy Optimization.
 
     Args:
@@ -160,70 +161,66 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
     actor_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
     critic_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
+    critic_variables = critic1.trainable_variables + \
+                       critic2.trainable_variables
+
     @tf.function
-    def actor_train_step(obs1, obs2, acts, rews, done):
+    def learn_on_batch(obs1, obs2, acts, rews, done):
         shape, n = (sample_size, batch_size), sample_size
         with tf.GradientTape(persistent=True) as g:
-            # Sample actions
-            n_acts, n_logpold = old_actor.sample_logprob(obs1, n)
-            n_logp = actor.action_logprob(obs1, n_acts)
+            kl = actor.kl(old_actor, obs1)
+            pi = actor.action(obs1)
+            _, q1_pi = critic1([obs1, pi])
+            _, q2_pi = critic2([obs1, pi])
+            q_pi = tf.minimum(q1_pi, q2_pi)
+            # For discrete actions
+            if isinstance(env.action_space, gym.spaces.Discrete):
+                q_pi *= tf.nn.softmax(actor(obs1))
+                q_pi = tf.reduce_sum(q_pi, axis=-1)
 
-            # Calculate Q values and advantages
-            n_obs1 = tf.tile(obs1, [sample_size, 1])
+            # Estimte C
+            n_acts = old_actor.sample(obs1, n)
+            n_obs1 = tf.tile(obs1, [n, 1])
             n_acts = tf.reshape(n_acts, (np.prod(shape),)+act_dim)
-            q1 = critic1([n_obs1, n_acts])
-            q2 = critic2([n_obs1, n_acts])
-            q = tf.reshape(tf.minimum(q1, q2), shape)
-
-            # Estimate C and Z
-            adv = q - tf.reduce_mean(q, axis=0)
-            max_abs_adv = tf.reduce_mean(tf.abs(adv))
+            n_q1, _ = critic1([n_obs1, n_acts])
+            n_q2, _ = critic2([n_obs1, n_acts])
+            n_q = tf.reshape(tf.minimum(n_q1, n_q2), shape)
+            n_adv = n_q - tf.reduce_mean(n_q, axis=0)
+            max_abs_adv = tf.reduce_max(tf.abs(n_adv))
             C = max_abs_adv * (gamma**2) / ((1-gamma)**1)
-            alpha = adv / (C + EPS)
-            Z = tf.reduce_mean(tf.exp(alpha), axis=0)
 
             # Actor loss
-            n_logptarg = n_logpold + alpha - tf.math.log(Z)
-            error = n_logp - n_logptarg
-            loss = 0.5 * tf.reduce_mean(error ** 2)
+            actor_loss = tf.reduce_mean(kl * C - q_pi)
 
-        # Compute gradients and do updates.
-        actor_gradients = g.gradient(loss, actor.trainable_variables)
-        actor_optimizer.apply_gradients(
-            zip(actor_gradients, actor.trainable_variables))
-        del g
-
-        return dict(loss=loss, logp=n_logp, alpha=alpha, C=C, Z=Z)
-
-    @tf.function
-    def critic_train_step(obs1, obs2, acts, rews, done):
-        shape, n = (sample_size, batch_size), sample_size
-        with tf.GradientTape(persistent=True) as g:
             # Main outputs from computation graph.
-            q1 = critic1([obs1, acts])
-            q2 = critic2([obs1, acts])
+            q1, _ = critic1([obs1, acts])
+            q2, _ = critic2([obs1, acts])
 
             # Get actions and log probs of actions for next states.
             act_next = actor.action(obs2)
 
             # Target Q-values, using actions from *current* policy.
-            target_q1 = critic1_targ([obs2, act_next])
-            target_q2 = critic2_targ([obs2, act_next])
+            target_q1, _ = critic1_targ([obs2, act_next])
+            target_q2, _ = critic2_targ([obs2, act_next])
             target_q = tf.minimum(target_q1, target_q2)
 
             # Bellman backup for Q function
             td_target = tf.stop_gradient(rews + gamma * (1 - done) * target_q)
 
-            # Soft actor-critic losses.
+            # Critic loss
             q1_loss = 0.5 * tf.reduce_mean((td_target - q1) ** 2)
             q2_loss = 0.5 * tf.reduce_mean((td_target - q2) ** 2)
-            value_loss = q1_loss + q2_loss
+            q_loss = q1_loss + q2_loss
 
-        critic_variables = critic1.trainable_variables + \
-                           critic2.trainable_variables
-        critic_gradients = g.gradient(value_loss, critic_variables)
+        # Compute gradients and do updates.
+        actor_gradients = g.gradient(actor_loss, actor.trainable_variables)
+        actor_optimizer.apply_gradients(
+            zip(actor_gradients, actor.trainable_variables))
+
+        critic_gradients = g.gradient(q_loss, critic_variables)
         critic_optimizer.apply_gradients(
             zip(critic_gradients, critic_variables))
+
         del g
 
         # Polyak averaging for target variables.
@@ -234,15 +231,12 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
                                critic2_targ.trainable_variables):
             target_v.assign(polyak * target_v + (1 - polyak) * v)
 
-        return dict(q1_loss=q1_loss, q2_loss=q2_loss, q1=q1, q2=q2)
-
-    def assign_old_eq_new():
-        # update old actor
-        for a, old_a in zip(actor.trainable_variables + \
-                            actor.non_trainable_weights, 
-                            old_actor.trainable_variables + \
-                            old_actor.non_trainable_weights):
+        for a, old_a in zip(actor.trainable_variables, 
+                            old_actor.trainable_variables):
             old_a.assign(a)
+
+        return dict(actor_loss=actor_loss, q1_loss=q1_loss, 
+                    q2_loss=q2_loss, q1=q1, q2=q2)
 
     def get_action(observation, deterministic=False):
         return actor.action(np.array([observation]), 
@@ -265,7 +259,10 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
     # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
         iter_time = time.time()
-        act = get_action(obs)
+        if t > start_steps:
+            act = get_action(obs)
+        else:
+            act = env.action_space.sample()
 
         # Step the env
         next_obs, rew, done, _ = env.step(act)
@@ -291,30 +288,19 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
 
         # Update handling.
         if t >= update_after and t % update_every == 0:
-            assign_old_eq_new()
-            # update critic
-            for i in range(update_every):
+            for _ in range(update_every):
                 batch = replay_buffer.sample_batch(batch_size)
-                results = critic_train_step(**batch)
-                logger.store(LossQ1=results['q1_loss'].numpy(),
+                results = learn_on_batch(**batch)
+                logger.store(LossA=results['actor_loss'].numpy(),
+                            LossQ1=results['q1_loss'].numpy(),
                             LossQ2=results['q2_loss'].numpy(),
                             Q1Vals=results['q1'].numpy(),
                             Q2Vals=results['q2'].numpy())
-            # update actor
-            for i in range(update_every):
-                batch = replay_buffer.sample_batch(batch_size)
-                results = actor_train_step(**batch)
-                logger.store(LossA=results['loss'].numpy(),
-                            LogP=results['logp'].numpy(),
-                            Alpha=results['alpha'].numpy(),
-                            C=results['C'].numpy(),
-                            Z=results['Z'].numpy())
 
         logger.store(StepsPerSecond=(1 / (time.time() - iter_time)))
 
         # End of epoch wrap-up.
-        if ((t > update_after) and ((t + 1) % log_every == 0)) or \
-            (t + 1 == total_steps):
+        if ((t + 1) % log_every == 0) or (t + 1 == total_steps):
             # Test the performance of the deterministic version of the agent.
             test_agent()
 
@@ -329,10 +315,6 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
             logger.log_tabular('LossQ1', average_only=True)
             logger.log_tabular('LossQ2', average_only=True)
             logger.log_tabular('LossA', average_only=True)
-            logger.log_tabular('LogP', with_min_and_max=True)
-            logger.log_tabular('Alpha', with_min_and_max=True)
-            logger.log_tabular('Z', with_min_and_max=True)
-            logger.log_tabular('C', average_only=True)
 
             logger.log_tabular('StepsPerSecond', average_only=True)
             logger.log_tabular('Time', time.time() - start_time)

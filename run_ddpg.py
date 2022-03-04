@@ -7,9 +7,9 @@ import tensorflow as tf
 
 from spinup_bis import ddpg_tf2 as agent  # pylint: disable=import-only-modules
 
-seed = 1
+seed = 3
 alg = 'ddpg'
-env_id = 'Ant-v2'
+env_id = 'Hopper-v2'
 output_dir = 'out/{}/{}/exp-{}'.format(env_id, alg, seed)
 save_path = output_dir + '/checkpoint'
 
@@ -23,7 +23,7 @@ else:
     neptune_kwargs = None
 
 
-ac_kwargs = dict(hidden_sizes=[64, 64],
+ac_kwargs = dict(hidden_sizes=[256, 256],
                  activation=tf.nn.relu)
 
 logger_kwargs = dict(output_dir=output_dir,
@@ -32,7 +32,7 @@ logger_kwargs = dict(output_dir=output_dir,
 
 agent(env_fn=env_fn,
       ac_kwargs=ac_kwargs,
-      total_steps=3_000_000,
+      total_steps=1_000_000,
       log_every=2000,
       gamma=0.99,
       replay_size=100_000,
