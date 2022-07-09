@@ -10,7 +10,7 @@
     "batch_size":	256,
     "env_fn":	"env_fn",
     "exp_name":	"Walker2d-v2_gpo",
-    "gamma":	0.99,
+    "gamma":	0.995,
     "log_every":	2000,
     "logger_kwargs":	{
         "exp_name":	"Walker2d-v2_gpo",
@@ -22,7 +22,6 @@
     "num_test_episodes":	10,
     "polyak":	0.995,
     "replay_size":	1000000,
-    "sample_size":	10,
     "save_freq":	200000,
     "save_path":	"out/Walker2d-v2/gpo/exp-1/checkpoint",
     "seed":	1,

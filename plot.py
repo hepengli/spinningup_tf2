@@ -27,7 +27,7 @@ sns.set_style('ticks',
               })
 sns.set_context("paper", font_scale=1.4)
 
-env = 'Walker2d-v2'
+env = 'Hopper-v2'
 dir = '/home/lihepeng/Documents/Github/spinningup_tf2/out/{}/'.format(env)
 # algs = ['ddpg', 'sac', 'td3', 'ppo', 'gpo']
 algs = ['sac', 'gpo']
@@ -35,10 +35,10 @@ algs = ['sac', 'gpo']
 fig = plt.figure()
 for alg in algs:
     returns = []
-    for seed in range(1,4):
+    for seed in range(1,2):
         df = pd.read_csv(dir+'{}/exp-{}/progress.txt'.format(alg, seed), sep="\t")
-        data = df['AverageTestEpRet'].values[:800]
-        returns.append(moving_avg(data, 50))
+        data = df['AverageTestEpRet'].values[:120]
+        returns.append(moving_avg(data, 10))
     dfs = pd.DataFrame(np.array(returns)).melt()
     sns.lineplot(data=dfs, x='variable', y='value')
 
