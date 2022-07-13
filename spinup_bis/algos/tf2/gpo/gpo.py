@@ -4,13 +4,11 @@ import random
 from re import A
 import time
 
-import gym
 import numpy as np
 import tensorflow as tf
 
 from spinup_bis.algos.tf2.gpo import core
 from spinup_bis.utils import logx
-from spinup_bis.utils import mpi_tools
 
 EPS = 1e-8
 
@@ -49,10 +47,10 @@ class ReplayBuffer:
 
 def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, 
         total_steps=1_000_000, log_every=10_000, replay_size=10_000, 
-        lr=1e-3, batch_size=256, update_every=50, update_after=1000, 
-        gamma=0.995, polyak=0.995, sample_size=10, max_ep_len=1000, 
-        save_freq=10_000, num_test_episodes=10, logger_kwargs=None, 
-        seed=None, save_path=None):
+        pi_lr=0.0003, v_lr=0.001, batch_size=256, update_after=1000, 
+        update_every=50, gamma=0.99, polyak=0.995, max_ep_len=1000, 
+        sample_size=10, num_test_episodes=10, save_freq=10_000, 
+        logger_kwargs=None, seed=None, save_path=None):
     """General Policy Optimization.
 
     Args:
@@ -160,8 +158,8 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
     critic2_targ.set_weights(critic2.get_weights())
 
     # Separate train ops for pi, q
-    actor_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-    critic_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    actor_optimizer = tf.keras.optimizers.Adam(learning_rate=pi_lr)
+    critic_optimizer = tf.keras.optimizers.Adam(learning_rate=v_lr)
 
     critic_variables = critic1.trainable_variables + \
                        critic2.trainable_variables
@@ -183,28 +181,28 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
     def actor_train(obs1, obs2, acts, rews, done):
         shape, n = (sample_size, batch_size), sample_size
         with tf.GradientTape(persistent=True) as g:
-            n_acts, logp_old = old_actor.sample_logprob(obs1, n)
-            logp = actor.action_logprob(obs1, n_acts)
+            # Compute logarithmic policy ratio
+            nacts, logp_old, values = old_actor.sample_logprob(obs1, n)
+            logp = actor.logprob(obs1, values)
 
-            # Estimte C
-            n_obs1 = tf.tile(obs1, [n, 1])
-            n_acts = tf.reshape(n_acts, (np.prod(shape),act_dim))
-            n_q1 = critic1([n_obs1, n_acts])
-            n_q2 = critic2([n_obs1, n_acts])
-            n_q = tf.reshape(tf.minimum(n_q1, n_q2), shape)
-            adv = n_q - tf.reduce_mean(n_q, axis=0)
-            max_abs_adv = tf.reduce_max(tf.math.abs(adv))
+            # Estimte target ratio
+            nobs1 = tf.tile(obs1, [n, 1])
+            nacts = tf.reshape(nacts, (np.prod(shape),act_dim))
+            q1 = critic1([nobs1, nacts])
+            q2 = critic2([nobs1, nacts])
+            q = tf.reshape(tf.minimum(q1, q2), shape)
+            adv = q - tf.reduce_mean(q, axis=0)
+            max_abs_adv = tf.reduce_mean(tf.math.abs(adv))
             C = max_abs_adv * (gamma**2) / ((1 - gamma)**1)
-            exp_alpha = tf.exp(adv / C)
-            Z = tf.reduce_mean(exp_alpha, axis=0, keepdims=True)
-            target_ratio = exp_alpha / Z
-            min_ratio = tf.reduce_min(target_ratio)
-            max_ratio = tf.reduce_max(target_ratio)
+            alpha = q / C
+            exp_alpha = tf.exp(alpha - tf.reduce_max(alpha, 0))
+            target_ratio = exp_alpha / tf.reduce_mean(exp_alpha, 0)
 
             # Actor loss
-            ratio = tf.exp(logp - logp_old)
-            clipped_ratio = tf.clip_by_value(ratio, min_ratio, max_ratio)
-            error = clipped_ratio - target_ratio
+            min_ratio = tf.reduce_min(target_ratio)
+            max_ratio = tf.reduce_max(target_ratio)
+            p, p_old = tf.exp(logp), tf.exp(logp_old)
+            error = p - p_old * target_ratio
             actor_loss = 0.5 * tf.reduce_mean(error ** 2)
 
         # Compute gradients and do updates.
@@ -216,7 +214,7 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
         for a, old_a in zip(actor_bn_variables, old_actor_bn_variables):
             old_a.assign(a)
 
-        return dict(actor_loss=actor_loss, C=C, logp=logp_old, alpha_min=min_ratio, alpha_max=max_ratio)
+        return dict(actor_loss=actor_loss, C=C, logp=logp_old, min_ratio=min_ratio, max_ratio=max_ratio)
 
     @tf.function
     def critic_train(obs1, obs2, acts, rews, done):
@@ -260,8 +258,8 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
                             old_actor.trainable_variables):
             old_a.assign(a)
 
-    def get_action(observation):
-        return actor.action(np.array([observation])).numpy()[0]
+    def get_action(observation, deterministic=False):
+        return actor.action(np.array([observation]), deterministic).numpy()[0]
 
     def test_agent():
         for _ in range(num_test_episodes):
@@ -269,7 +267,7 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
             while not (d or (ep_len == max_ep_len)):
                 # Take deterministic actions at test time.
                 o, r, d, _ = test_env.step(
-                    get_action(tf.convert_to_tensor(o)))
+                    get_action(tf.convert_to_tensor(o), True))
                 ep_ret += r
                 ep_len += 1
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
@@ -312,7 +310,9 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
                 results = actor_train(**batch)
                 logger.store(LossAC=results['actor_loss'].numpy(),
                              C=results['C'].numpy(),
-                             LogP=results['logp'].numpy())
+                             LogP=results['logp'].numpy(),
+                             MinRatio=results['min_ratio'].numpy(),
+                             MaxRatio=results['max_ratio'].numpy())
             for i in range(update_every):
                 batch = replay_buffer.sample_batch(batch_size)
                 results = critic_train(**batch)
@@ -341,6 +341,8 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
             logger.log_tabular('LossAC', average_only=True)
             logger.log_tabular('C', with_min_and_max=True)
             logger.log_tabular('LogP', with_min_and_max=True)
+            logger.log_tabular('MinRatio', with_min_and_max=True)
+            logger.log_tabular('MaxRatio', with_min_and_max=True)
             logger.log_tabular('StepsPerSecond', average_only=True)
             logger.log_tabular('Time', time.time() - start_time)
 

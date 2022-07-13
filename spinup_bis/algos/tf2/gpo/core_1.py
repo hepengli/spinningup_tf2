@@ -14,9 +14,9 @@ def gaussian_likelihood(value, mu, log_std):
     """Calculates value's likelihood under Gaussian pdf."""
     pre_sum = -0.5 * (
         ((value - mu) / (tf.exp(log_std) + EPS)) ** 2 +
-        2 * log_std + np.log(2 * np.pi) - \
+        2 * log_std + np.log(2 * np.pi)) - \
         2 * (np.log(2) + value + tf.nn.softplus(-2 * value))
-    )
+
     return tf.reduce_sum(pre_sum, axis=-1)
 
 

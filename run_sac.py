@@ -7,7 +7,7 @@ import tensorflow as tf
 
 from spinup_bis import sac_tf2 as agent  # pylint: disable=import-only-modules
 
-seed = 1
+seed = 2
 alg = 'sac'
 env_id = 'Hopper-v2'
 output_dir = 'out/{}/{}/exp-{}'.format(env_id, alg, seed)

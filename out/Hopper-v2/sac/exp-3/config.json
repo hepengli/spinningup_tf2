@@ -7,26 +7,27 @@
         ]
     },
     "actor_critic":	"mlp_actor_critic",
+    "alpha":	0.2,
     "batch_size":	256,
     "env_fn":	"env_fn",
-    "exp_name":	"Humanoid-v2_gpo",
+    "exp_name":	"Hopper-v2_sac",
     "gamma":	0.99,
     "log_every":	2000,
     "logger_kwargs":	{
-        "exp_name":	"Humanoid-v2_gpo",
+        "exp_name":	"Hopper-v2_sac",
         "neptune_kwargs":	null,
-        "output_dir":	"out/Humanoid-v2/gpo/exp-1"
+        "output_dir":	"out/Hopper-v2/sac/exp-3"
     },
     "lr":	0.001,
     "max_ep_len":	1000,
     "num_test_episodes":	10,
     "polyak":	0.995,
     "replay_size":	1000000,
-    "sample_size":	10,
     "save_freq":	200000,
-    "save_path":	"out/Humanoid-v2/gpo/exp-1/checkpoint",
-    "seed":	1,
-    "total_steps":	10000000,
+    "save_path":	"out/Hopper-v2/sac/exp-3/checkpoint",
+    "seed":	3,
+    "start_steps":	10000,
+    "total_steps":	1000000,
     "update_after":	1000,
     "update_every":	50
 }

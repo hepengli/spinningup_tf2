@@ -2,6 +2,7 @@
 import gym
 import numpy as np
 import tensorflow as tf
+from tensorflow_probability import distributions as tfd
 
 
 EPS = 1e-8
@@ -14,16 +15,6 @@ def combined_shape(length, shape=None):
     if shape is None:
         return (length,)
     return (length, shape) if np.isscalar(shape) else (length, *shape)
-
-
-def log_likelihood(value, mu, log_std):
-    """Calculates value's log likelihood under squashed Gaussian pdf."""
-    logp = -0.5 * (
-        ((value - mu) / (tf.exp(log_std) + EPS)) ** 2 +
-        2 * log_std + np.log(2 * np.pi))
-
-    return tf.reduce_mean(logp, axis=-1)
-
 
 def mlp(hidden_sizes=(64, 32), activation='relu', output_activation=None):
     """Creates MLP with the specified parameters."""
@@ -102,55 +93,59 @@ def make_actor_continuous(action_space, hidden_sizes, activation):
 
             self._mu = tf.keras.layers.Dense(
                 self._action_dim[0], 
+                activation=tf.tanh,
                 name='mean')
-            # self._log_std = tf.keras.layers.Dense(
-            #     self._action_dim[0], 
-            #     name='log_std_dev')
-            self._log_std = tf.Variable(
-                initial_value=-0.5 * np.ones(
-                    shape=(1,) + self._action_dim,
-                    dtype=np.float32), 
-                trainable=True,
+            self._log_std = tf.keras.layers.Dense(
+                self._action_dim[0], 
                 name='log_std_dev')
 
         @tf.function
         def call(self, inputs):
             x = self._body(inputs=inputs)
             mu = self._mu(x)
-            log_std = self._log_std
+            log_std = self._log_std(x)
 
             log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
 
-            return mu, log_std
+            return mu, tf.exp(log_std)
 
         @tf.function
         def action(self, observations, deterministic=False):
-            mu, log_std = self(observations)
-            std = tf.exp(log_std)
+            mu, std = self(observations)
+            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=-1, high=1)
+
             low, high = self._action_space.low, self._action_space.high
-
-            value = mu if deterministic else tf.random.normal(mu.shape, mu, std)
-            action = low + (high - low) * (tf.nn.tanh(value) + 1) / 2
-
-            return action
+            if deterministic:
+                return low + (high - low) * (mu + 1) / 2
+            else:
+                return low + (high - low) * (dist.sample() + 1) / 2
 
         @tf.function
-        def logprob(self, observations, value):
-            mu, log_std = self(observations)
+        def logprob(self, observations, actions):
+            mu, std = self(observations)
+            low, high = self._action_space.low, self._action_space.high
+            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=-1, high=1)
 
-            return log_likelihood(value, mu, log_std)
+            # Make sure actions are in correct range
+            low, high = self._action_space.low, self._action_space.high
+            actions = 2 * (actions - low) / (high - low) - 1
+            log_prob = dist.log_prob(actions)
+
+            return tf.reduce_sum(log_prob, axis=-1)
 
         @tf.function
         def sample_logprob(self, observations, n_samples):
-            mu, log_std = self(observations)
-            std = tf.exp(log_std)
+            mu, std = self(observations)
+            dist = tfd.TruncatedNormal(loc=mu, scale=std, low=-1, high=1)
+
+            actions = dist.sample(n_samples)
+            log_prob = dist.log_prob(actions)
+
+            # Make sure actions are in correct range
             low, high = self._action_space.low, self._action_space.high
+            actions = low + (high - low) * (actions + 1) / 2
 
-            value = tf.random.normal((n_samples,) + mu.shape, mu, std)
-            action = low + (high - low) * (tf.nn.tanh(value) + 1) / 2
-            log_prob = log_likelihood(value, mu, log_std)
-
-            return action, log_prob, value
+            return actions, tf.reduce_sum(log_prob, axis=-1)
 
     return ContinuousActor(action_space, hidden_sizes, activation)
 

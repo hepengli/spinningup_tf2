@@ -37,8 +37,8 @@ for alg in algs:
     returns = []
     for seed in range(1,2):
         df = pd.read_csv(dir+'{}/exp-{}/progress.txt'.format(alg, seed), sep="\t")
-        data = df['AverageTestEpRet'].values[:120]
-        returns.append(moving_avg(data, 10))
+        data = df['AverageTestEpRet'].values[:500]
+        returns.append(moving_avg(data, 50))
     dfs = pd.DataFrame(np.array(returns)).melt()
     sns.lineplot(data=dfs, x='variable', y='value')
 
