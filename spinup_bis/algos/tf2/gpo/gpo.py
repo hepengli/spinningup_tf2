@@ -47,9 +47,9 @@ class ReplayBuffer:
 
 def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, 
         total_steps=1_000_000, log_every=10_000, replay_size=10_000, 
-        pi_lr=0.0003, v_lr=0.001, batch_size=256, update_after=1000, 
-        update_every=50, gamma=0.99, polyak=0.995, max_ep_len=1000, 
-        sample_size=10, num_test_episodes=10, save_freq=10_000, 
+        start_steps=10_000, lr=1e-3, batch_size=256, sample_size=20, 
+        update_after=1000, update_every=50, gamma=0.99, polyak=0.995, 
+        max_ep_len=1000, num_test_episodes=10, save_freq=10_000, 
         logger_kwargs=None, seed=None, save_path=None):
     """General Policy Optimization.
 
@@ -146,20 +146,20 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
     critic2.build(input_shape=(None, obs_dim + act_dim))
 
     # Target networks
-    old_actor, critic1_targ, critic2_targ = actor_critic(**ac_kwargs)
+    actor_old, critic1_targ, critic2_targ = actor_critic(**ac_kwargs)
 
-    old_actor.build(input_shape=(None, obs_dim))
+    actor_old.build(input_shape=(None, obs_dim))
     critic1_targ.build(input_shape=(None, obs_dim + act_dim))
     critic2_targ.build(input_shape=(None, obs_dim + act_dim))
 
     # Copy weights
-    old_actor.set_weights(actor.get_weights())
+    actor_old.set_weights(actor.get_weights())
     critic1_targ.set_weights(critic1.get_weights())
     critic2_targ.set_weights(critic2.get_weights())
 
     # Separate train ops for pi, q
-    actor_optimizer = tf.keras.optimizers.Adam(learning_rate=pi_lr)
-    critic_optimizer = tf.keras.optimizers.Adam(learning_rate=v_lr)
+    actor_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    critic_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
     critic_variables = critic1.trainable_variables + \
                        critic2.trainable_variables
@@ -167,58 +167,31 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
     critic_targ_variables = critic1_targ.trainable_variables + \
                             critic2_targ.trainable_variables
 
-    actor_bn_variables = [v for v in actor.trainable_variables 
-                            if 'batch_normalization' in v.name]
-    old_actor_bn_variables = [v for v in old_actor.trainable_variables 
-                            if 'batch_normalization' in v.name]
-
-    critic_bn_variables = [v for v in critic_variables 
-                            if 'batch_normalization' in v.name]
-    critic_targ_bn_variables = [v for v in critic_targ_variables 
-                            if 'batch_normalization' in v.name]
-
     @tf.function
-    def actor_train(obs1, obs2, acts, rews, done):
-        shape, n = (sample_size, batch_size), sample_size
+    def learn_on_batch(obs1, obs2, acts, rews, done, last_max_abs_adv):
+        n = sample_size * act_dim
         with tf.GradientTape(persistent=True) as g:
-            # Compute logarithmic policy ratio
-            nacts, logp_old, values = old_actor.sample_logprob(obs1, n)
-            logp = actor.logprob(obs1, values)
+            # Compute policy ratio
+            logp_old, a_old, u_old = actor_old.sample_logp(obs1, n)
+            logp = actor.logp(obs1, u_old)
+            ratio = tf.exp(logp - logp_old)
 
             # Estimte target ratio
             nobs1 = tf.tile(obs1, [n, 1])
-            nacts = tf.reshape(nacts, (np.prod(shape),act_dim))
-            q1 = critic1([nobs1, nacts])
-            q2 = critic2([nobs1, nacts])
-            q = tf.reshape(tf.minimum(q1, q2), shape)
-            adv = q - tf.reduce_mean(q, axis=0)
-            max_abs_adv = tf.reduce_mean(tf.math.abs(adv))
-            C = max_abs_adv * (gamma**2) / ((1 - gamma)**1)
-            alpha = q / C
-            exp_alpha = tf.exp(alpha - tf.reduce_max(alpha, 0))
-            target_ratio = exp_alpha / tf.reduce_mean(exp_alpha, 0)
+            nacts = tf.reshape(a_old, (n * batch_size, act_dim))
+            nq1 = critic1([nobs1, nacts])
+            nq2 = critic2([nobs1, nacts])
+            nq = tf.reshape(tf.minimum(nq1, nq2), (n, batch_size))
+            adv = nq - tf.reduce_mean(nq, axis=0)
+            max_abs_adv = tf.reduce_max(tf.math.abs(adv))
+            C = max_abs_adv * (gamma**2) / ((1 - gamma)**2)
+            exp_alpha = tf.exp(adv / (C + EPS))
+            target_ratio = exp_alpha / tf.reduce_mean(exp_alpha, axis=0)
 
             # Actor loss
-            min_ratio = tf.reduce_min(target_ratio)
-            max_ratio = tf.reduce_max(target_ratio)
-            p, p_old = tf.exp(logp), tf.exp(logp_old)
-            error = p - p_old * target_ratio
-            actor_loss = 0.5 * tf.reduce_mean(error ** 2)
+            error = ratio - target_ratio
+            actor_loss = 0.5 * (tf.reduce_mean(error ** 2))
 
-        # Compute gradients and do updates.
-        actor_gradients = g.gradient(actor_loss, actor.trainable_variables)
-        actor_optimizer.apply_gradients(
-            zip(actor_gradients, actor.trainable_variables))
-        del g
-
-        for a, old_a in zip(actor_bn_variables, old_actor_bn_variables):
-            old_a.assign(a)
-
-        return dict(actor_loss=actor_loss, C=C, logp=logp_old, min_ratio=min_ratio, max_ratio=max_ratio)
-
-    @tf.function
-    def critic_train(obs1, obs2, acts, rews, done):
-        with tf.GradientTape(persistent=True) as g:
             # Main outputs from computation graph.
             q1 = critic1([obs1, acts])
             q2 = critic2([obs1, acts])
@@ -243,20 +216,21 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
         critic_gradients = g.gradient(q_loss, critic_variables)
         critic_optimizer.apply_gradients(
             zip(critic_gradients, critic_variables))
+        actor_gradients = g.gradient(actor_loss, actor.trainable_variables)
+        actor_optimizer.apply_gradients(
+            zip(actor_gradients, actor.trainable_variables))
         del g
 
+        # update parameters
+        for a, old_a in zip(actor.trainable_variables, 
+                            actor_old.trainable_variables):
+            old_a.assign(a)
         # Polyak averaging for target variables.
         for v, target_v in zip(critic_variables, critic_targ_variables):
             target_v.assign(polyak * target_v + (1 - polyak) * v)
-        for v, target_v in zip(critic_bn_variables, critic_targ_bn_variables):
-            target_v.assign(v)
 
-        return dict(q1_loss=q1_loss, q2_loss=q2_loss, q1=q1, q2=q2)
-
-    def assign_old_eq_new():
-        for a, old_a in zip(actor.trainable_variables, 
-                            old_actor.trainable_variables):
-            old_a.assign(a)
+        return dict(actor_loss=actor_loss, C=C, logp=logp, max_abs_adv=max_abs_adv, 
+                    q1_loss=q1_loss, q2_loss=q2_loss, q1=q1, q2=q2)
 
     def get_action(observation, deterministic=False):
         return actor.action(np.array([observation]), deterministic).numpy()[0]
@@ -278,7 +252,11 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
     # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
         iter_time = time.time()
-        act = get_action(obs)
+        # act = get_action(obs)
+        if t >= start_steps:
+            act = get_action(obs)
+        else:
+            act = env.action_space.sample()
 
         # Step the env
         next_obs, rew, done, _ = env.step(act)
@@ -304,22 +282,19 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
 
         # Update handling.
         if t >= update_after and t % update_every == 0:
-            assign_old_eq_new()
-            for i in range(update_every):
+            max_abs_adv = None
+            for _ in range(update_every):
                 batch = replay_buffer.sample_batch(batch_size)
-                results = actor_train(**batch)
+                batch.update({'last_max_abs_adv': max_abs_adv})
+                results = learn_on_batch(**batch)
+                max_abs_adv = results['max_abs_adv'].numpy()
                 logger.store(LossAC=results['actor_loss'].numpy(),
                              C=results['C'].numpy(),
                              LogP=results['logp'].numpy(),
-                             MinRatio=results['min_ratio'].numpy(),
-                             MaxRatio=results['max_ratio'].numpy())
-            for i in range(update_every):
-                batch = replay_buffer.sample_batch(batch_size)
-                results = critic_train(**batch)
-                logger.store(LossQ1=results['q1_loss'].numpy(),
-                            LossQ2=results['q2_loss'].numpy(),
-                            Q1Vals=results['q1'].numpy(),
-                            Q2Vals=results['q2'].numpy())
+                             LossQ1=results['q1_loss'].numpy(),
+                             LossQ2=results['q2_loss'].numpy(),
+                             Q1Vals=results['q1'].numpy(),
+                             Q2Vals=results['q2'].numpy())
 
         logger.store(StepsPerSecond=(1 / (time.time() - iter_time)))
 
@@ -338,11 +313,9 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
             logger.log_tabular('Q2Vals', average_only=True)
             logger.log_tabular('LossQ1', average_only=True)
             logger.log_tabular('LossQ2', average_only=True)
-            logger.log_tabular('LossAC', average_only=True)
+            logger.log_tabular('LossAC', with_min_and_max=True)
             logger.log_tabular('C', with_min_and_max=True)
             logger.log_tabular('LogP', with_min_and_max=True)
-            logger.log_tabular('MinRatio', with_min_and_max=True)
-            logger.log_tabular('MaxRatio', with_min_and_max=True)
             logger.log_tabular('StepsPerSecond', average_only=True)
             logger.log_tabular('Time', time.time() - start_time)
 

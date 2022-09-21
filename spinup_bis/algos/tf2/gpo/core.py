@@ -19,30 +19,28 @@ def combined_shape(length, shape=None):
 def log_likelihood(value, mu, log_std):
     """Calculates value's log likelihood under squashed Gaussian pdf."""
     logp = -0.5 * (
-        ((value - mu) / (tf.exp(log_std) + EPS)) ** 2 +
-        2 * log_std + np.log(2 * np.pi))
+        ((value - mu) / (tf.exp(log_std + EPS))) ** 2 +
+        2 * log_std + np.log(2 * np.pi)) - \
+        (-2 * tf.nn.softplus(-value) - value)
+        # 2 * (np.log(2) - value - tf.nn.softplus(-2 * value))
 
-    return tf.reduce_mean(logp, axis=-1)
+    return tf.reduce_sum(logp, axis=-1)
 
 
 def mlp(hidden_sizes=(64, 32), activation='relu', output_activation=None):
     """Creates MLP with the specified parameters."""
     model = tf.keras.Sequential()
-    model.add(tf.keras.layers.BatchNormalization())
 
     for h in hidden_sizes[:-1]:
         model.add(tf.keras.layers.Dense(units=h, activation=activation))
-        model.add(tf.keras.layers.BatchNormalization())
 
     model.add(tf.keras.layers.Dense(
         units=hidden_sizes[-1], activation=output_activation))
-    model.add(tf.keras.layers.BatchNormalization())
 
     return model
 
 
-def make_actor_discrete(observation_space, action_space, hidden_sizes,
-                        activation, layer_norm):
+def make_actor_discrete(observation_space, action_space, hidden_sizes, activation):
     """Creates actor tf.keras.Model.
 
     This function can be used only in environments with discrete action space.
@@ -51,14 +49,13 @@ def make_actor_discrete(observation_space, action_space, hidden_sizes,
     class DiscreteActor(tf.keras.Model):
         """Actor model for discrete action space."""
 
-        def __init__(self, observation_space, action_space, hidden_sizes, 
-                     activation):
+        def __init__(self, observation_space, action_space, hidden_sizes, activation):
             super().__init__()
             self._act_dim = action_space.n
 
             obs_input = tf.keras.Input(shape=observation_space.shape)
             actor = mlp(hidden_sizes=list(hidden_sizes) + [action_space.n],
-                activation=activation, layer_norm=layer_norm)(obs_input)
+                activation=activation)(obs_input)
 
             self._network = tf.keras.Model(inputs=obs_input, outputs=actor)
 
@@ -68,13 +65,12 @@ def make_actor_discrete(observation_space, action_space, hidden_sizes,
 
         @tf.function
         def action(self, observations):
-            return tf.squeeze(tf.random.categorical(self(observations), 1),
-                              axis=1)
+            return tf.squeeze(tf.random.categorical(self(observations), 1), axis=1)
 
         @tf.function
-        def action_logprob(self, observations, actions, training=False):
+        def logprob(self, observations, actions):
             return tf.reduce_sum(
-                tf.math.multiply(self(observations, training),
+                tf.math.multiply(self(observations),
                                  tf.one_hot(tf.cast(actions, tf.int32),
                                             depth=self._act_dim)), axis=-1)
 
@@ -103,9 +99,6 @@ def make_actor_continuous(action_space, hidden_sizes, activation):
             self._mu = tf.keras.layers.Dense(
                 self._action_dim[0], 
                 name='mean')
-            # self._log_std = tf.keras.layers.Dense(
-            #     self._action_dim[0], 
-            #     name='log_std_dev')
             self._log_std = tf.Variable(
                 initial_value=-0.5 * np.ones(
                     shape=(1,) + self._action_dim,
@@ -119,38 +112,39 @@ def make_actor_continuous(action_space, hidden_sizes, activation):
             mu = self._mu(x)
             log_std = self._log_std
 
-            log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
-
             return mu, log_std
 
         @tf.function
         def action(self, observations, deterministic=False):
             mu, log_std = self(observations)
             std = tf.exp(log_std)
+
+            log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
             low, high = self._action_space.low, self._action_space.high
 
-            value = mu if deterministic else tf.random.normal(mu.shape, mu, std)
-            action = low + (high - low) * (tf.nn.tanh(value) + 1) / 2
+            value = mu if deterministic else mu + tf.random.normal(mu.shape) * std
+            action = low + (high - low) * tf.nn.sigmoid(value)
 
             return action
 
         @tf.function
-        def logprob(self, observations, value):
+        def logp(self, observations, u):
             mu, log_std = self(observations)
-
-            return log_likelihood(value, mu, log_std)
+            log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
+            return log_likelihood(u, mu, log_std)
 
         @tf.function
-        def sample_logprob(self, observations, n_samples):
+        def sample_logp(self, observations, n_samples):
             mu, log_std = self(observations)
+            log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
             std = tf.exp(log_std)
             low, high = self._action_space.low, self._action_space.high
 
-            value = tf.random.normal((n_samples,) + mu.shape, mu, std)
-            action = low + (high - low) * (tf.nn.tanh(value) + 1) / 2
-            log_prob = log_likelihood(value, mu, log_std)
+            value = mu + tf.random.normal((n_samples,) + mu.shape) * std
+            action = low + (high - low) * tf.nn.sigmoid(value)
+            logp = log_likelihood(value, mu, log_std)
 
-            return action, log_prob, value
+            return logp, action, value
 
     return ContinuousActor(action_space, hidden_sizes, activation)
 

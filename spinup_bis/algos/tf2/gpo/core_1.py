@@ -15,7 +15,7 @@ def gaussian_likelihood(value, mu, log_std):
     pre_sum = -0.5 * (
         ((value - mu) / (tf.exp(log_std) + EPS)) ** 2 +
         2 * log_std + np.log(2 * np.pi)) - \
-        2 * (np.log(2) + value + tf.nn.softplus(-2 * value))
+        2 * (np.log(2) - value - tf.nn.softplus(-2 * value))
 
     return tf.reduce_sum(pre_sum, axis=-1)
 
@@ -114,44 +114,36 @@ def make_actor_continuous(action_space, hidden_sizes, activation, layer_norm):
             self._mu = tf.keras.layers.Dense(
                 self._action_dim[0], 
                 name='mean')
-            self._log_std = tf.keras.layers.Dense(
-                action_space.shape[0], 
-                name='log_std_dev')
-            # self._log_std = tf.Variable(
-            #     initial_value=-0.5 * np.ones(shape=(1,) + self._action_dim,
-            #                                  dtype=np.float32), trainable=True,
+            # self._log_std = tf.keras.layers.Dense(
+            #     self._action_dim[0], 
             #     name='log_std_dev')
+            self._log_std = tf.Variable(
+                initial_value=-0.5 * np.ones(shape=(1,) + self._action_dim,
+                                             dtype=np.float32), trainable=True,
+                name='log_std_dev')
 
         @tf.function
         def call(self, inputs, training=None, mask=None):
             x = self._body(inputs=inputs)
             mu = self._mu(x)
-            log_std = self._log_std(x)
+            log_std = self._log_std
 
             log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
 
             return mu, log_std
 
         @tf.function
-        def action(self, observations):
+        def action(self, observations, deterministic=False, n=None):
             mu, log_std = self(observations)
             std = tf.exp(log_std)
             low, high = self._action_space.low, self._action_space.high
 
-            eps = tf.random.normal(mu.shape)
-            value = mu + eps * std
+            shape = mu.shape if n is None else (n,) + mu.shape
+            value = mu if deterministic else mu + tf.random.normal(shape) * std
             action = low + (high - low) * (tf.nn.tanh(value) + 1) / 2
             log_prob = gaussian_likelihood(value, mu, log_std)
 
-            return action, log_prob, eps
-
-        @tf.function
-        def log_prob(self, observations, eps):
-            mu, log_std = self(observations)
-            std = tf.exp(log_std)
-            value = mu + eps * std
-
-            return gaussian_likelihood(value, mu, log_std)
+            return action, log_prob
 
         @tf.function
         def kl(self, other, observations):
@@ -178,7 +170,7 @@ def make_critic_continuous(observation_space, action_space, hidden_sizes, activa
         tf.keras.layers.Reshape([]),
     ])(concat_input)
 
-    return tf.keras.Model(inputs=[obs_input, act_input], outputs=[critic, critic])
+    return tf.keras.Model(inputs=[obs_input, act_input], outputs=[critic])
 
 
 def make_critic_discrete(observation_space, action_space, hidden_sizes, activation):

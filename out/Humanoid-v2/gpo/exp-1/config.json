@@ -1,25 +1,26 @@
 {
     "ac_kwargs":	{
-        "activation":	"relu",
+        "activation":	"tanh",
         "hidden_sizes":	[
             256,
             256
-        ]
+        ],
+        "norm":	true
     },
     "actor_critic":	"mlp_actor_critic",
     "batch_size":	256,
     "env_fn":	"env_fn",
     "exp_name":	"Humanoid-v2_gpo",
-    "gamma":	0.99,
+    "gamma":	0.995,
     "log_every":	2000,
     "logger_kwargs":	{
         "exp_name":	"Humanoid-v2_gpo",
         "neptune_kwargs":	null,
         "output_dir":	"out/Humanoid-v2/gpo/exp-1"
     },
-    "lr":	0.001,
     "max_ep_len":	1000,
     "num_test_episodes":	10,
+    "pi_lr":	0.0003,
     "polyak":	0.995,
     "replay_size":	1000000,
     "sample_size":	10,
@@ -28,5 +29,6 @@
     "seed":	1,
     "total_steps":	10000000,
     "update_after":	1000,
-    "update_every":	50
+    "update_every":	50,
+    "v_lr":	0.001
 }

@@ -1,6 +1,6 @@
 {
     "ac_kwargs":	{
-        "activation":	"relu",
+        "activation":	"relu6",
         "hidden_sizes":	[
             256,
             256
@@ -10,7 +10,7 @@
     "batch_size":	256,
     "env_fn":	"env_fn",
     "exp_name":	"Ant-v2_gpo",
-    "gamma":	0.99,
+    "gamma":	0.995,
     "log_every":	2000,
     "logger_kwargs":	{
         "exp_name":	"Ant-v2_gpo",
@@ -26,7 +26,6 @@
     "save_freq":	200000,
     "save_path":	"out/Ant-v2/gpo/exp-2/checkpoint",
     "seed":	2,
-    "start_steps":	10000,
     "total_steps":	3000000,
     "update_after":	1000,
     "update_every":	50
