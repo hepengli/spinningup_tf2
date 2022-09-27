@@ -1,4 +1,5 @@
 """Core functions of the GPO algorithm."""
+from operator import is_
 import gym
 import numpy as np
 import tensorflow as tf
@@ -19,10 +20,9 @@ def combined_shape(length, shape=None):
 def log_likelihood(value, mu, log_std):
     """Calculates value's log likelihood under squashed Gaussian pdf."""
     logp = -0.5 * (
-        ((value - mu) / (tf.exp(log_std + EPS))) ** 2 +
+        ((value - mu) / (tf.exp(log_std) + EPS)) ** 2 +
         2 * log_std + np.log(2 * np.pi)) - \
-        (-2 * tf.nn.softplus(-value) - value)
-        # 2 * (np.log(2) - value - tf.nn.softplus(-2 * value))
+        2 * (np.log(2) - value - tf.nn.softplus(-2 * value))
 
     return tf.reduce_sum(logp, axis=-1)
 
@@ -115,17 +115,21 @@ def make_actor_continuous(action_space, hidden_sizes, activation):
             return mu, log_std
 
         @tf.function
-        def action(self, observations, deterministic=False):
+        def action(self, observations, deterministic=False, with_log=False):
             mu, log_std = self(observations)
             std = tf.exp(log_std)
 
             log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
             low, high = self._action_space.low, self._action_space.high
 
-            value = mu if deterministic else mu + tf.random.normal(mu.shape) * std
-            action = low + (high - low) * tf.nn.sigmoid(value)
+            value = mu if deterministic else tf.random.normal(mu.shape, mu, std)
+            action = low + (high - low) * (tf.nn.tanh(value) + 1) / 2
 
-            return action
+            if with_log:
+                logp = log_likelihood(value, mu, log_std)
+                return action, logp
+            else:
+                return action
 
         @tf.function
         def logp(self, observations, u):
@@ -140,8 +144,8 @@ def make_actor_continuous(action_space, hidden_sizes, activation):
             std = tf.exp(log_std)
             low, high = self._action_space.low, self._action_space.high
 
-            value = mu + tf.random.normal((n_samples,) + mu.shape) * std
-            action = low + (high - low) * tf.nn.sigmoid(value)
+            value = tf.random.normal((n_samples,) + mu.shape, mu, std)
+            action = low + (high - low) * (tf.nn.tanh(value) + 1) / 2
             logp = log_likelihood(value, mu, log_std)
 
             return logp, action, value

@@ -47,7 +47,7 @@ class ReplayBuffer:
 
 def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, 
         total_steps=1_000_000, log_every=10_000, replay_size=10_000, 
-        start_steps=10_000, lr=1e-3, batch_size=256, sample_size=20, 
+        start_steps=10_000, lr=1e-3, batch_size=256, sample_size=30, 
         update_after=1000, update_every=50, gamma=0.99, polyak=0.995, 
         max_ep_len=1000, num_test_episodes=10, save_freq=10_000, 
         logger_kwargs=None, seed=None, save_path=None):
@@ -164,12 +164,9 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
     critic_variables = critic1.trainable_variables + \
                        critic2.trainable_variables
 
-    critic_targ_variables = critic1_targ.trainable_variables + \
-                            critic2_targ.trainable_variables
-
     @tf.function
-    def learn_on_batch(obs1, obs2, acts, rews, done, last_max_abs_adv):
-        n = sample_size * act_dim
+    def learn_on_batch(obs1, obs2, acts, rews, done):
+        n = sample_size
         with tf.GradientTape(persistent=True) as g:
             # Compute policy ratio
             logp_old, a_old, u_old = actor_old.sample_logp(obs1, n)
@@ -182,10 +179,10 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
             nq1 = critic1([nobs1, nacts])
             nq2 = critic2([nobs1, nacts])
             nq = tf.reshape(tf.minimum(nq1, nq2), (n, batch_size))
-            adv = nq - tf.reduce_mean(nq, axis=0)
+            adv = nq - tf.reduce_mean(nq, axis=0) - logp_old * ((1-gamma)**4)
             max_abs_adv = tf.reduce_max(tf.math.abs(adv))
             C = max_abs_adv * (gamma**2) / ((1 - gamma)**2)
-            exp_alpha = tf.exp(adv / (C + EPS))
+            exp_alpha = tf.exp(adv / C)
             target_ratio = exp_alpha / tf.reduce_mean(exp_alpha, axis=0)
 
             # Actor loss
@@ -213,24 +210,36 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
             q_loss = q1_loss + q2_loss
 
         # Compute gradients and do updates.
-        critic_gradients = g.gradient(q_loss, critic_variables)
-        critic_optimizer.apply_gradients(
-            zip(critic_gradients, critic_variables))
         actor_gradients = g.gradient(actor_loss, actor.trainable_variables)
         actor_optimizer.apply_gradients(
             zip(actor_gradients, actor.trainable_variables))
+        critic_gradients = g.gradient(q_loss, critic_variables)
+        critic_optimizer.apply_gradients(
+            zip(critic_gradients, critic_variables))
         del g
 
-        # update parameters
+        # assign actor to old actor
         for a, old_a in zip(actor.trainable_variables, 
                             actor_old.trainable_variables):
             old_a.assign(a)
+
         # Polyak averaging for target variables.
-        for v, target_v in zip(critic_variables, critic_targ_variables):
+        for v, target_v in zip(critic1.trainable_variables,
+                               critic1_targ.trainable_variables):
+            target_v.assign(polyak * target_v + (1 - polyak) * v)
+        for v, target_v in zip(critic2.trainable_variables,
+                               critic2_targ.trainable_variables):
             target_v.assign(polyak * target_v + (1 - polyak) * v)
 
-        return dict(actor_loss=actor_loss, C=C, logp=logp, max_abs_adv=max_abs_adv, 
-                    q1_loss=q1_loss, q2_loss=q2_loss, q1=q1, q2=q2)
+
+        return dict(
+            actor_loss=actor_loss, 
+            q1_loss=q1_loss, 
+            q2_loss=q2_loss, 
+            q1=q1, 
+            q2=q2, 
+            logp=logp, 
+            C=C)
 
     def get_action(observation, deterministic=False):
         return actor.action(np.array([observation]), deterministic).numpy()[0]
@@ -252,8 +261,7 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
     # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
         iter_time = time.time()
-        # act = get_action(obs)
-        if t >= start_steps:
+        if t > start_steps:
             act = get_action(obs)
         else:
             act = env.action_space.sample()
@@ -282,19 +290,16 @@ def gpo(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None,
 
         # Update handling.
         if t >= update_after and t % update_every == 0:
-            max_abs_adv = None
             for _ in range(update_every):
                 batch = replay_buffer.sample_batch(batch_size)
-                batch.update({'last_max_abs_adv': max_abs_adv})
                 results = learn_on_batch(**batch)
-                max_abs_adv = results['max_abs_adv'].numpy()
-                logger.store(LossAC=results['actor_loss'].numpy(),
-                             C=results['C'].numpy(),
-                             LogP=results['logp'].numpy(),
-                             LossQ1=results['q1_loss'].numpy(),
-                             LossQ2=results['q2_loss'].numpy(),
-                             Q1Vals=results['q1'].numpy(),
-                             Q2Vals=results['q2'].numpy())
+                logger.store(LossAC=results['actor_loss'],
+                             C=results['C'],
+                             LogP=results['logp'],
+                             LossQ1=results['q1_loss'],
+                             LossQ2=results['q2_loss'],
+                             Q1Vals=results['q1'],
+                             Q2Vals=results['q2'])
 
         logger.store(StepsPerSecond=(1 / (time.time() - iter_time)))
 
